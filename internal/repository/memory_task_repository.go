@@ -24,6 +24,16 @@ func (r *MemoryTaskRepository) Create(_ context.Context, task model.Task) (model
 	return task, nil
 }
 
+func (r *MemoryTaskRepository) Update(_ context.Context, task model.Task) (model.Task, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.tasks[task.ID]; !ok {
+		return model.Task{}, ErrTaskNotFound
+	}
+	r.tasks[task.ID] = task
+	return task, nil
+}
+
 func (r *MemoryTaskRepository) GetAll(_ context.Context) ([]model.Task, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

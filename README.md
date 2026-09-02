@@ -4,13 +4,33 @@ GoFlow is a final-year software engineering project that aims to design and eval
 
 ## Current phase
 
-Phase 1 provides the backend foundation: a Gin REST API, a task domain model, layered business logic, and concurrency-safe in-memory task management. It does not execute tasks in the background yet.
+Phase 2 adds a local concurrent worker pool to the Phase 1 Gin REST API and concurrency-safe in-memory task repository. Tasks are accepted immediately and processed asynchronously by worker goroutines in the same application process.
 
 ```text
-HTTP request -> Handler -> Service -> Repository interface -> In-memory repository
+Client -> Gin handler -> Task service -> In-memory repository
+                              |
+                              v
+                    Buffered task channel
+                              |
+                 +------------+------------+
+                 v            v            v
+              worker-1     worker-2     worker-3
+                 |            |            |
+                 +------ simulated processing -----+
+                              |
+                              v
+                  Service updates task status
 ```
 
-This separation keeps HTTP, business rules, and persistence independent. A PostgreSQL implementation can later replace the in-memory store without rewriting the service.
+This separation keeps HTTP, business rules, queueing, and persistence independent. The queue contract can later be backed by Redis, and a PostgreSQL repository can replace the in-memory store without rewriting HTTP handlers.
+
+## Worker pool and asynchronous processing
+
+`POST /api/v1/tasks` validates and saves a task with `queued` status, submits only its ID to a buffered channel, and returns `201 Created` without waiting. Three worker goroutines listen to the same channel. A worker changes its task to `running`, simulates work for approximately three seconds, and then changes it to `completed`. Processing errors or shutdown cancellation produce `failed` status.
+
+A buffered channel allows a limited number of jobs to wait without requiring a worker to receive each job at the exact instant it is submitted. Its fixed capacity also provides backpressure: a full or closed queue produces a `503 Service Unavailable` response rather than blocking the HTTP request indefinitely.
+
+The application listens for Ctrl+C, `SIGINT`, and `SIGTERM`. Shutdown first stops the HTTP server from accepting new requests, closes the queue to new submissions, cancels worker processing through `context.Context`, and uses `sync.WaitGroup` to wait for worker goroutines to exit.
 
 ## Planned architecture
 
@@ -65,10 +85,12 @@ go test -race ./...
 go vet ./...
 ```
 
-## Phase 1 limitations
+## Current limitations
 
-- In-memory data is lost on restart and is local to one API process.
-- Tasks are managed but not executed.
+- The queue and repository are in memory, so tasks are lost on restart.
+- Workers and the queue exist only inside one application process.
+- Processing is simulated; there is no real task-specific work yet.
+- There is no distributed queue or persistent database.
 - Authentication, pagination, observability, and deployment packaging are not included.
 
-The recommended next phase is a local worker-pool implementation using Go goroutines and channels.
+The recommended next phase focuses on task retries, timeouts, cancellation, and priority queue behavior before introducing Redis.

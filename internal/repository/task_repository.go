@@ -13,6 +13,7 @@ var ErrTaskNotFound = errors.New("task not found")
 // implementation, such as PostgreSQL, can replace the in-memory store later.
 type TaskRepository interface {
 	Create(ctx context.Context, task model.Task) (model.Task, error)
+	Update(ctx context.Context, task model.Task) (model.Task, error)
 	GetAll(ctx context.Context) ([]model.Task, error)
 	GetByID(ctx context.Context, id string) (model.Task, error)
 	Delete(ctx context.Context, id string) error

@@ -9,12 +9,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Kaveesha23dil/go-task-platform/internal/model"
+	"github.com/Kaveesha23dil/go-task-platform/internal/queue"
 	"github.com/Kaveesha23dil/go-task-platform/internal/repository"
 )
 
 var (
-	ErrInvalidTask     = errors.New("task type and payload are required")
-	ErrInvalidPriority = errors.New("priority must be between 1 and 5")
+	ErrInvalidTask      = errors.New("task type and payload are required")
+	ErrInvalidPriority  = errors.New("priority must be between 1 and 5")
+	ErrQueueUnavailable = errors.New("task queue is unavailable")
 )
 
 type CreateTaskInput struct {
@@ -25,13 +27,19 @@ type CreateTaskInput struct {
 
 type TaskService struct {
 	repository repository.TaskRepository
+	queue      queue.Submitter
 	now        func() time.Time
 	newID      func() string
 }
 
-func NewTaskService(taskRepository repository.TaskRepository) *TaskService {
+func NewTaskService(taskRepository repository.TaskRepository, taskQueue ...queue.Submitter) *TaskService {
+	var submitter queue.Submitter
+	if len(taskQueue) > 0 {
+		submitter = taskQueue[0]
+	}
 	return &TaskService{
 		repository: taskRepository,
+		queue:      submitter,
 		now:        time.Now,
 		newID:      uuid.NewString,
 	}
@@ -57,7 +65,19 @@ func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (model.
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	return s.repository.Create(ctx, task)
+	created, err := s.repository.Create(ctx, task)
+	if err != nil {
+		return model.Task{}, err
+	}
+	if s.queue == nil {
+		return created, nil
+	}
+	if err := s.queue.Submit(ctx, queue.Job{TaskID: created.ID}); err != nil {
+		// Roll back so a task is never left queued when no worker can receive it.
+		_ = s.repository.Delete(context.Background(), created.ID)
+		return model.Task{}, errors.Join(ErrQueueUnavailable, err)
+	}
+	return created, nil
 }
 
 func (s *TaskService) GetAll(ctx context.Context) ([]model.Task, error) {
@@ -70,4 +90,15 @@ func (s *TaskService) GetByID(ctx context.Context, id string) (model.Task, error
 
 func (s *TaskService) Delete(ctx context.Context, id string) error {
 	return s.repository.Delete(ctx, id)
+}
+
+func (s *TaskService) UpdateStatus(ctx context.Context, id string, status model.TaskStatus) error {
+	task, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	task.Status = status
+	task.UpdatedAt = s.now().UTC()
+	_, err = s.repository.Update(ctx, task)
+	return err
 }

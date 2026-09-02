@@ -58,6 +58,8 @@ func (h *TaskHandler) Create(c *gin.Context) {
 			writeError(c, http.StatusBadRequest, "INVALID_TASK", err.Error())
 		case errors.Is(err, service.ErrInvalidPriority):
 			writeError(c, http.StatusBadRequest, "INVALID_PRIORITY", err.Error())
+		case errors.Is(err, service.ErrQueueUnavailable):
+			writeError(c, http.StatusServiceUnavailable, "QUEUE_UNAVAILABLE", "Task queue is temporarily unavailable")
 		default:
 			writeError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "An internal error occurred")
 		}
